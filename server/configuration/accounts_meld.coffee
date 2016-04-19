@@ -1,10 +1,8 @@
 orig_updateOrCreateUserFromExternalService = Accounts.updateOrCreateUserFromExternalService
 Accounts.updateOrCreateUserFromExternalService = (serviceName, serviceData, options) ->
-	if serviceName not in ['facebook', 'github', 'google', 'meteor-developer', 'linkedin']
-		return
 
-	if serviceName is 'github' and (not serviceData.email? or serviceData.email.trim() is '')
-		throw new Meteor.Error 'github-no-public-email'
+	if serviceName not in ['facebook', 'github', 'gitlab', 'google', 'meteor-developer', 'linkedin', 'twitter', 'sandstorm'] and serviceData._OAuthCustom isnt true
+		return
 
 	if serviceName is 'meteor-developer'
 		if _.isArray serviceData?.emails
@@ -19,24 +17,19 @@ Accounts.updateOrCreateUserFromExternalService = (serviceName, serviceData, opti
 	if serviceName is 'linkedin'
 		serviceData.email = serviceData.emailAddress
 
-	if not serviceData.email? or serviceData.email.trim() is ''
-		throw new Meteor.Error 'no-verified-email'
-		return
+	if serviceData.email
 
-	# Remove not verified users that have same email
-	notVerifiedUser = Meteor.users.remove({emails: {$elemMatch: {address: serviceData.email, verified: false}}})
+		# Find user with given email
+		user = RocketChat.models.Users.findOneByEmailAddress serviceData.email
+		if user?
+			# If e-mail is not verified, reset password and require password change
+			if not _.findWhere user.emails, { address: serviceData.email, verified: true }
+				RocketChat.models.Users.resetPasswordAndSetRequirePasswordChange(user._id, true, 'This_email_has_already_been_used_and_has_not_been_verified__Please_change_your_password')
 
-	# Try to get existent user with same email verified
-	user = Meteor.users.findOne({emails: {$elemMatch: {address: serviceData.email, verified: true}}})
+			# Merge accounts
+			RocketChat.models.Users.setServiceId user._id, serviceName, serviceData.id
 
-	if user?
-		serviceIdKey = "services." + serviceName + ".id"
-		update = {}
-		update[serviceIdKey] = serviceData.id
-		Meteor.users.update({
-			_id: user._id
-		}, {
-			$set: update
-		})
+			# Validate e-mail
+			RocketChat.models.Users.setEmailVerified user._id, serviceData.email
 
 	return orig_updateOrCreateUserFromExternalService.apply(this, arguments)

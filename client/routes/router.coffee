@@ -1,110 +1,120 @@
-Router.configure
-	progress : true
-	loadingTemplate: 'loading'
-	notFoundTemplate: 'error'
+Blaze.registerHelper 'pathFor', (path, kw) ->
+	return FlowRouter.path path, kw.hash
 
-	waitOn: ->
-		if Meteor.userId()
-			return [Meteor.subscribe('userData'), RoomManager.init()]
+BlazeLayout.setRoot 'body'
 
-	onBeforeAction: ->
-		Session.setDefault('flexOpened', false)
-		Session.set('openedRoom', null)
-		this.next()
+FlowRouter.subscriptions = ->
+	Tracker.autorun =>
+		RoomManager.init()
+		@register 'userData', Meteor.subscribe('userData')
+		@register 'activeUsers', Meteor.subscribe('activeUsers')
+		@register 'admin-settings', Meteor.subscribe('admin-settings')
 
-	onAfterAction: ->
-		unless Router._layout._template is 'appLayout'
-			Router.configure
-				layoutTemplate: 'appLayout'
 
-Router.onBeforeAction ->
-	if not Meteor.userId()
-		this.layout('loginLayout')
-		this.render('loginForm')
-	else
-		this.next()
-
-Router.onBeforeAction ->
-	if Meteor.userId()? and not Meteor.user().username?
-		this.layout('usernameLayout')
-		return this.render('usernamePrompt')
-
-	if Meteor.userId()? and not Meteor.user().avatarOrigin?
-		this.layout('usernameLayout')
-		return this.render('avatarPrompt')
-
-	this.next()
-, {
-	except: ['login']
-}
-
-Router.route '/',
+FlowRouter.route '/',
 	name: 'index'
 
-	onBeforeAction: ->
-		if Meteor.userId()
-			Router.go 'home'
-		else
-			Router.go 'login'
+	action: ->
+		BlazeLayout.render 'main', {center: 'loading'}
+		if not Meteor.userId()
+			return FlowRouter.go 'home'
+
+		Tracker.autorun (c) ->
+			if FlowRouter.subsReady() is true
+				Meteor.defer ->
+					if Meteor.user().defaultRoom?
+						room = Meteor.user().defaultRoom.split('/')
+						FlowRouter.go room[0], {name: room[1]}
+					else
+						FlowRouter.go 'home'
+				c.stop()
 
 
-Router.route '/login',
+FlowRouter.route '/login',
 	name: 'login'
 
-	onBeforeAction: ->
-		if Meteor.userId()
-			Router.go 'home'
+	action: ->
+		FlowRouter.go 'home'
 
 
-Router.route '/home',
+FlowRouter.route '/home',
 	name: 'home'
 
 	action: ->
-		this.render('home')
-
-	onAfterAction: ->
+		RocketChat.TabBar.showGroup 'home'
+		BlazeLayout.render 'main', {center: 'home'}
 		KonchatNotification.getDesktopPermission()
 
 
-Router.route '/room/:_id',
-	name: 'room'
-
-	waitOn: ->
-		RoomManager.open @params._id
-
-	onBeforeAction: ->
-		unless ChatRoom.find(@params._id).count()
-			Router.go 'home'
-
-		Session.set('openedRoom', this.params._id)
-		Session.set('showUserInfo', null)
-
-		this.next()
+FlowRouter.route '/changeavatar',
+	name: 'changeAvatar'
 
 	action: ->
+		RocketChat.TabBar.showGroup 'changeavatar'
+		BlazeLayout.render 'main', {center: 'avatarPrompt'}
 
-		self = this
-		Session.set('editRoomTitle', false)
-		Meteor.call 'readMessages', self.params._id
-		Tracker.nonreactive ->
-			KonchatNotification.removeRoomNotification(self.params._id)
-			self.render 'chatWindowDashboard',
-				data:
-					_id: self.params._id
+FlowRouter.route '/account/:group?',
+	name: 'account'
 
-	onAfterAction: ->
-		setTimeout ->
-			$('.message-form .input-message').focus()
-			$('.messages-box .wrapper').scrollTop(99999)
-		, 100
+	action: (params) ->
+		unless params.group
+			params.group = 'Preferences'
+		params.group = _.capitalize params.group, true
+		RocketChat.TabBar.showGroup 'account'
+		BlazeLayout.render 'main', { center: "account#{params.group}" }
 
 
-Router.route '/history/private',
+FlowRouter.route '/history/private',
 	name: 'privateHistory'
+
+	subscriptions: (params, queryParams) ->
+		@register 'privateHistory', Meteor.subscribe('privateHistory')
 
 	action: ->
 		Session.setDefault('historyFilter', '')
-		this.render 'privateHistory'
+		RocketChat.TabBar.showGroup 'private-history'
+		BlazeLayout.render 'main', {center: 'privateHistory'}
 
-	waitOn: ->
-		return [ Meteor.subscribe('privateHistory') ]
+
+FlowRouter.route '/terms-of-service',
+	name: 'terms-of-service'
+
+	action: ->
+		Session.set 'cmsPage', 'Layout_Terms_of_Service'
+		BlazeLayout.render 'cmsPage'
+
+FlowRouter.route '/privacy-policy',
+	name: 'privacy-policy'
+
+	action: ->
+		Session.set 'cmsPage', 'Layout_Privacy_Policy'
+		BlazeLayout.render 'cmsPage'
+
+FlowRouter.route '/room-not-found/:type/:name',
+	name: 'room-not-found'
+
+	action: (params) ->
+		Session.set 'roomNotFound', {type: params.type, name: params.name}
+		BlazeLayout.render 'main', {center: 'roomNotFound'}
+
+FlowRouter.route '/fxos',
+	name: 'firefox-os-install'
+
+	action: ->
+		BlazeLayout.render 'fxOsInstallPrompt'
+
+FlowRouter.route '/register/:hash',
+	name: 'register-secret-url'
+	action: (params) ->
+		BlazeLayout.render 'secretURL'
+
+		# if RocketChat.settings.get('Accounts_RegistrationForm') is 'Secret URL'
+		# 	Meteor.call 'checkRegistrationSecretURL', params.hash, (err, success) ->
+		# 		if success
+		# 			Session.set 'loginDefaultState', 'register'
+		# 			BlazeLayout.render 'main', {center: 'home'}
+		# 			KonchatNotification.getDesktopPermission()
+		# 		else
+		# 			BlazeLayout.render 'logoLayout', { render: 'invalidSecretURL' }
+		# else
+		# 	BlazeLayout.render 'logoLayout', { render: 'invalidSecretURL' }

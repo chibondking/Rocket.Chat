@@ -4,10 +4,13 @@
 ###
 
 class Me
-	constructor: (message) ->
-		# If message starts with /me, replace it for text formatting
-		if message.msg.indexOf('/me ') is 0
-			message.html = '_' + message.html.replace('/me ','') + '_'
-		return message
+	constructor: (command, params, item) ->
+		if(command == "me")
+			if _.trim params
+				msg = item
+				msg.msg = '_' + params + '_'
+				Meteor.call 'sendMessage', msg
 
-RocketChat.callbacks.add 'renderMessage', Me
+RocketChat.slashCommands.add 'me', Me,
+	description: 'Displays_action_text'
+	params: 'your message'

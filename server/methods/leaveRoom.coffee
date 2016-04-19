@@ -1,47 +1,33 @@
 Meteor.methods
 	leaveRoom: (rid) ->
+		unless Meteor.userId()
+			throw new Meteor.Error(403, "[methods] leaveRoom -> Invalid user")
+
+		this.unblock()
+
 		fromId = Meteor.userId()
-		# console.log '[methods] leaveRoom -> '.green, 'fromId:', fromId, 'rid:', rid
+		room = RocketChat.models.Rooms.findOneById rid
+		user = Meteor.user()
 
-		unless Meteor.userId()?
-			throw new Meteor.Error 300, 'Usuário não logado'
+		# If user is room owner, check if there are other owners. If there isn't anyone else, warn user to set a new owner.
+		if RocketChat.authz.hasRole(user._id, 'owner', room._id)
+			numOwners = RocketChat.authz.getUsersInRole('owner', room._id).fetch().length
+			if numOwners is 1
+				throw new Meteor.Error 'last-owner', 'You_are_the_last_owner_Please_set_new_owner_before_leaving_the_room'
 
-		room = ChatRoom.findOne rid
+		RocketChat.callbacks.run 'beforeLeaveRoom', user, room
 
-		update =
-			$pull:
-				usernames: Meteor.user().username
+		RocketChat.models.Rooms.removeUsernameById rid, user.username
 
-		ChatSubscription.update { rid: rid },
-			$set:
-				name: room.name
-		,
-			multi: true
+		if room.usernames.indexOf(user.username) isnt -1
+			removedUser = user
+			RocketChat.models.Messages.createUserLeaveWithRoomIdAndUser rid, removedUser
 
-		if room.t isnt 'c' and room.usernames.indexOf(Meteor.user().username) isnt -1
-			removedUser = Meteor.user()
+		if room.t is 'l'
+			RocketChat.models.Messages.createCommandWithRoomIdAndUser 'survey', rid, user
 
-			ChatMessage.insert
-				rid: rid
-				ts: (new Date)
-				t: 'ul'
-				msg: removedUser.name
-				u:
-					_id: removedUser._id
-					username: removedUser.username
+		RocketChat.models.Subscriptions.removeByRoomIdAndUserId rid, Meteor.userId()
 
-		if room.u._id is Meteor.userId()
-			newOwner = _.without(room.usernames, Meteor.user().username)[0]
-			if newOwner?
-				newOwner = Meteor.users.findOne username: newOwner
+		Meteor.defer ->
 
-				if newOwner?
-					if not update.$set?
-						update.$set = {}
-
-					update.$set['u._id'] = newOwner._id
-					update.$set['u.username'] = newOwner.username
-
-		ChatSubscription.remove { rid: rid, 'u._id': Meteor.userId() }
-
-		ChatRoom.update rid, update
+			RocketChat.callbacks.run 'afterLeaveRoom', user, room
